@@ -20,14 +20,17 @@
 #define PWM_Var 40
 
 // Seed for random
-static uint16_t lfsr = 0xACE1u;
-
 static adc_oneshot_unit_handle_t adc_handle;
 
-uint8_t gerar_prbs_6_10(void) {
-    uint16_t bit = ((lfsr >> 0) ^ (lfsr >> 2) ^ (lfsr >> 3) ^ (lfsr >> 5)) & 1u;
+static uint16_t lfsr = 0xACE1u;
+
+uint8_t gerar_prbs_3_10(void) {
+    // Taps otimizados para PRBS-16 (bits 0, 1, 3 e 12)
+    uint16_t bit = ((lfsr >> 0) ^ (lfsr >> 1) ^ (lfsr >> 3) ^ (lfsr >> 12)) & 1u;
     lfsr = (lfsr >> 1) | (bit << 15);
-    return (lfsr % 5) + 6;
+    
+    // lfsr % 8 resulta em [0, 7]. Somando 3, o resultado final é [3, 10].
+    return (lfsr & 0x07) + 3;
 }
 
 void init_pwm() {
@@ -84,19 +87,29 @@ void app_main(void) {
     uint32_t PWM_Value = (PWM_Base - PWM_Var);
     int64_t last_time = -1;
     printf("-| Tempo (s) | PWM | Heater (°C) | Ambient (°C) |\n");
-    uint8_t interval = gerar_prbs_6_10();
+    uint8_t interval = gerar_prbs_3_10();
+    uint8_t last_interval = 0;
+    int64_t Last_impulse_time = 0;
 
     while (1) {
         
         int64_t Time = esp_timer_get_time()/1000;
+        int64_t impulse_time = Time/60000;
         
         if (Time != last_time) {
-            if (Time % (interval*60*Sample_Period) == 0)
+            if (Time % (60000) == 0)
             {
-                Switch = !Switch;
-                PWM_Value = Switch ? (PWM_Base + PWM_Var) : (PWM_Base - PWM_Var);
-                Set_Heater(PWM_Value);
-                interval = interval + gerar_prbs_6_10();
+                if ((impulse_time - Last_impulse_time) == interval) {
+                    Last_impulse_time = impulse_time;
+                    last_interval = interval;
+                    Switch = !Switch;
+                    PWM_Value = Switch ? (PWM_Base + PWM_Var) : (PWM_Base - PWM_Var);
+                    Set_Heater(PWM_Value);
+                    interval = gerar_prbs_3_10();
+                    while (abs(interval - last_interval) <= 1){
+                        interval = gerar_prbs_3_10();
+                    }
+                }
             } 
                     
             if (Time % Sample_Period == 0)
