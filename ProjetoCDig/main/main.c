@@ -25,11 +25,8 @@ static adc_oneshot_unit_handle_t adc_handle;
 static uint16_t lfsr = 0xACE1u;
 
 uint8_t gerar_prbs_3_10(void) {
-    // Taps otimizados para PRBS-16 (bits 0, 1, 3 e 12)
     uint16_t bit = ((lfsr >> 0) ^ (lfsr >> 1) ^ (lfsr >> 3) ^ (lfsr >> 12)) & 1u;
     lfsr = (lfsr >> 1) | (bit << 15);
-    
-    // lfsr % 8 resulta em [0, 7]. Somando 3, o resultado final é [3, 10].
     return (lfsr & 0x07) + 3;
 }
 
