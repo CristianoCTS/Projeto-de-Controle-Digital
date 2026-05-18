@@ -1,0 +1,80 @@
+>> Prj1CDig_m
+
+delayv =
+
+     0
+
+
+gv =
+ 
+Process model with transfer function:        
+                   1+Tz*s                    
+  G(s) = Kp * ------------------ * exp(-Td*s)
+              (1+Tp1*s)(1+Tp2*s)             
+                                             
+         Kp = 0.19891                        
+        Tp1 = 45.292                         
+        Tp2 = 0.32322                        
+         Td = 0.136                          
+         Tz = -1.7984                        
+                                             
+Parameterization:
+    {'P2DZ'}
+   Number of free coefficients: 5
+   Use "getpvec", "getcov" for parameters and their uncertainties.
+
+Status:                                             
+Estimated using PROCEST on time domain data "datav".
+Fit to estimation data: 69.08%                      
+FPE: 5.167, MSE: 5.161                              
+ 
+Model Properties
+
+h = 
+
+  struct with fields:
+
+             Type: {'P2DZ'}
+               Kp: 0.1989
+              Tp1: 45.2920
+              Tp2: 0.3232
+              Tp3: 0
+               Tz: -1.7984
+               Tw: 0
+             Zeta: 0
+               Td: 0.1360
+      Integration: 0
+          NoiseTF: [1×1 struct]
+        Structure: [1×1 pmodel.process]
+    NoiseVariance: 5.1642
+       InputDelay: 0
+      OutputDelay: 0
+        InputName: {'u1'}
+        InputUnit: {''}
+       InputGroup: [1×1 struct]
+       OutputName: {'y1'}
+       OutputUnit: {''}
+      OutputGroup: [1×1 struct]
+            Notes: [0×1 string]
+         UserData: []
+             Name: ''
+               Ts: 0
+         TimeUnit: 'seconds'
+     SamplingGrid: [1×1 struct]
+           Report: [1×1 idresults.procest]
+
+
+kp =
+
+    0.2042
+
+
+ans =
+
+  logical
+
+   1
+
+Warning: Matching "From" for "Goto" 'Termico_FP/Goto' not found 
+> In Prj1CDig_m (line 108) 
+>> 
