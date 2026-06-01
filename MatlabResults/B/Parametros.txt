@@ -1,0 +1,71 @@
+>> Prj1CDig_m
+
+delayv =
+
+     0
+
+
+gv =
+ 
+Process model with transfer function:        
+                   1+Tz*s                    
+  G(s) = Kp * ------------------ * exp(-Td*s)
+              (1+Tp1*s)(1+Tp2*s)             
+                                             
+         Kp = 0.20427                        
+        Tp1 = 46.536                         
+        Tp2 = 0.20158                        
+         Td = 0.603                          
+         Tz = -3.8041                        
+                                             
+Parameterization:
+    {'P2DZ'}
+   Number of free coefficients: 5
+   Use "getpvec", "getcov" for parameters and their uncertainties.
+
+Status:                                             
+Estimated using PROCEST on time domain data "datav".
+Fit to estimation data: 89.72%                      
+FPE: 0.555, MSE: 0.5539                             
+ 
+Model Properties
+
+h = 
+
+  struct with fields:
+
+             Type: {'P2DZ'}
+               Kp: 0.2043
+              Tp1: 46.5361
+              Tp2: 0.2016
+              Tp3: 0
+               Tz: -3.8041
+               Tw: 0
+             Zeta: 0
+               Td: 0.6030
+      Integration: 0
+          NoiseTF: [1×1 struct]
+        Structure: [1×1 pmodel.process]
+    NoiseVariance: 0.5545
+       InputDelay: 0
+      OutputDelay: 0
+        InputName: {'u1'}
+        InputUnit: {''}
+       InputGroup: [1×1 struct]
+       OutputName: {'y1'}
+       OutputUnit: {''}
+      OutputGroup: [1×1 struct]
+            Notes: [0×1 string]
+         UserData: []
+             Name: ''
+               Ts: 0
+         TimeUnit: 'seconds'
+     SamplingGrid: [1×1 struct]
+           Report: [1×1 idresults.procest]
+
+
+kp =
+
+    0.2049
+
+>> 

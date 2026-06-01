@@ -1,0 +1,106 @@
+>> Prj1CDig_m
+
+gv =
+ 
+Process model with transfer function:        
+                   1+Tz*s                    
+  G(s) = Kp * ------------------ * exp(-Td*s)
+              (1+Tp1*s)(1+Tp2*s)             
+                                             
+         Kp = 0.18                           
+        Tp1 = 349.45                         
+        Tp2 = 61.88                          
+         Td = 2                              
+         Tz = 300                            
+                                             
+Input delays (listed by channel): 2          
+                                             
+Parameterization:
+    {'P2DZ'}
+   Number of free coefficients: 5
+   Use "getpvec", "getcov" for parameters and their uncertainties.
+
+Status:                                             
+Estimated using PROCEST on time domain data "datav".
+Fit to estimation data: 73.82%                      
+FPE: 2.554, MSE: 2.548                              
+ 
+Model Properties
+
+h = 
+
+  struct with fields:
+
+             Type: {'P2DZ'}
+               Kp: 0.1800
+              Tp1: 349.4456
+              Tp2: 61.8803
+              Tp3: 0
+               Tz: 300
+               Tw: 0
+             Zeta: 0
+               Td: 2
+      Integration: 0
+          NoiseTF: [1×1 struct]
+        Structure: [1×1 pmodel.process]
+    NoiseVariance: 2.5510
+       InputDelay: 2
+      OutputDelay: 0
+        InputName: {'u1'}
+        InputUnit: {''}
+       InputGroup: [1×1 struct]
+       OutputName: {'y1'}
+       OutputUnit: {''}
+      OutputGroup: [1×1 struct]
+            Notes: [0×1 string]
+         UserData: []
+             Name: ''
+               Ts: 0
+         TimeUnit: 'seconds'
+     SamplingGrid: [1×1 struct]
+           Report: [1×1 idresults.procest]
+
+
+kp =
+
+    0.1800
+
+olhada 1
+ kp: 0.180000
+ tp1: 349.445608
+ tp2: 61.880254
+ td: 2.000000
+ tz: 300.000000
+
+ans =
+
+  logical
+
+   1
+
+olhada 2
+ kp: 0.180000
+ tp1: 349.445608
+ tp2: 61.880254
+ td: 2.000000
+ tz: 300.000000
+3
+ kp: 0.180000
+ tp1: 349.445608
+ tp2: 61.880254
+ td: 2.000000
+ tz: 300.000000
+olhada 4
+ kp: 0.180000
+ tp1: 349.445608
+ tp2: 61.880254
+ td: 2.000000
+ tz: 300.000000
+
+ans =
+
+  logical
+
+   1
+
+>> 
