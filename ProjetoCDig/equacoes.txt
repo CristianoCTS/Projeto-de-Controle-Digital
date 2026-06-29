@@ -1,0 +1,11 @@
+//observador de perturbação
+Xs1 = (1/s)*((L3*ee) + (Xs2));
+Xs2 = (1/s)*((L4*ee) -(K*Xs1));
+//observador do processo
+X1e = (1/s)*((L1*ee) + (Kp*(Upi-Kxe)) - (X1e/Tp1));
+X2e = (1/s)*((L2*ee) + (Kp*(Upi-Kxe)) - (X2e/Tp2));
+Ye = ((A/Tp1)*X1e) + ((B/Tp2)*X2e);
+//Realimentação de estados
+Kxe = (K1*X1e) + (K2*X2e);
+//Controlador PI
+Upi = (Nb*R) + ((Ki/s)*(R-Y));

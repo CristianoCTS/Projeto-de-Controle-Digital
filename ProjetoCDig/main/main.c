@@ -18,55 +18,73 @@
 static uint16_t lfsr = 0xACE1u;
 
 // Parametros do código
-#define Sample_Period 4000  
+#define Sample_Period 3700  
 #define PWM_Base 150   
 #define PWM_Var 40
 #define MEDIAN_SIZE 5
 #define KP 0.03f
 #define KI (KP * 17.0f)
-#define SATmax 1024.0f
+#define SATmax 600.0f
 #define SATmin 0.0f
 #define Smplg 1.0f
 #define ALPHA 0.15f
 #define R_quadradico true
+#define UpperLimit 600.0f
+#define LowerLimit SATmin
 
 static adc_oneshot_unit_handle_t adc_handle;
 static float median_sorted[MEDIAN_SIZE];
 bool Coleta_de_Dados = false;
+bool transient = true;
 uint32_t PWM_Value = 0;
 
-//Parametros do projeto
-#define KP_MOD 0.2357f
-#define TP1 400.0f
-#define TP2 45.337f
-#define A_GAIN (KP_MOD * TP1)
-#define B_GAIN (KP_MOD * TP2)
-#define NB 27.497f
-#define KI_GAIN 1.9241f
-#define KA1 0.0213f
-#define KA2 0.4825f
-#define KXE (-1.9241f)
-#define L1 58.4773f
-#define L2 18.2415f
-#define L3 3.9058f
-#define L4 (-0.6964f)
-#define W0 (2.0f * (float)M_PI / 300.0f)
+// Parametros do projeto atualizados conforme OutputMatLab.txt
+#define L1 47.893f
+#define L2 18.225f
+#define L3 3.3082f
+#define L4 -0.70755f
+#define K 0.009604f
+#define w sqrtf(K)
+#define Kp 0.23573f
+#define K1 0.02865f
+#define K2 0.5643f
+#define Tp1 400.0f
+#define Tp2 45.337f
+#define ATp1 0.00070489f
+#define BTp2 0.015838f
+#define Ki 1.2463f
+#define Nb 30.964f
+#define Ts Sample_Period/1000.0f
 
-static float g_pi_c;
-static float g_ad1, g_bd1, g_ld1;
-static float g_ad2, g_bd2, g_ld2;
-static float g_Fss[2][2];
-static float g_Gss[2];
-static float s_xi = 0.0f;
-static float s_er_prev = 0.0f;
-static float s_x1e = 0.0f;
-static float s_x2e = 0.0f;
-static float s_u_prev = 0.0f;
-static float s_ee_prev = 0.0f;
-static float s_xs1 = 0.0f;
-static float s_xs2 = 0.0f;
-static float s_eesin_prev = 0.0f;
-float estados[2];
+#define euler1 exp(-Ts/Tp1)
+#define euler2 exp(-Ts/Tp2)
+#define a1 2*cosf(w*Ts)
+#define b1 (L3/w)*(sinf(w*Ts))+((L4/(K))*(1-cosf(w*Ts)))
+#define c1 ((-L3/w)*(sinf(w*Ts)))+((L4/(K))*(1-cosf(w*Ts)))
+#define a2 2*cosf(w*Ts)
+#define b2 ((L4/w)*(sinf(w*Ts)))-(L3*(1-cosf(w*Ts)))
+#define c2 ((-L4/w)*(sinf(w*Ts)))-(L3*(1-cosf(w*Ts)))
+
+float xs1_old2 = 0;
+float xs1_old = 0;
+float xs2_old2 = 0;
+float xs2_old = 0;
+float eep_old2 = 0;
+float ees_old2 = 0;
+float eep_old = 0;
+float ees_old = 0;
+float x1e = 0;
+float x2e = 0;
+float x1e_old = 0;
+float x2e_old = 0;
+float Uobs_old = 0;
+float xi_old = 0;
+float xi = 0;
+float er_old = 0;
+float ee = 0;
+float Ye = 25;
+
+
 
 //Parametros dos filtros
 typedef struct {
@@ -83,83 +101,77 @@ typedef struct {
 } EWMFilter;
 
 //Funções
-void parametros_projeto(float Ts)
-{
-    float T2 = Ts * 0.5f;
-    g_pi_c = KI_GAIN * T2;
-    float a1   = 1.0f / TP1;
-    float den1 = 1.0f + a1 * T2;
-    g_ad1 = (1.0f - a1 * T2) / den1;
-    g_bd1 = (T2 * (A_GAIN / TP1)) / den1;
-    g_ld1 = (L1 * T2) / den1;
-    float a2   = 1.0f / TP2;
-    float den2 = 1.0f + a2 * T2;
-    g_ad2 = (1.0f - a2 * T2) / den2;
-    g_bd2 = (T2 * (B_GAIN / TP2)) / den2;
-    g_ld2 = (L2 * T2) / den2;
-    float w2  = W0 * W0;
-    float det = 1.0f + w2 * T2 * T2;
-    g_Fss[0][0] =  (1.0f - w2 * T2 * T2) / det;
-    g_Fss[0][1] =  (2.0f * T2)/ det;
-    g_Fss[1][0] = -(2.0f * w2 * T2)/ det;
-    g_Fss[1][1] =  (1.0f - w2 * T2 * T2) / det;
-    g_Gss[0] =  Ts * (L3+ T2 * L4)/ det;
-    g_Gss[1] =  Ts * (-w2 * T2 * L3+ L4)/ det;
-}
-
 float PI_control(float Th, float Target, float sat_max, float sat_min)
 {
+    xi = xi_old + (Sample_Period*er_old);
+    float Upi = (Nb*Target) + xi;
     float er = Target - Th;
-    float xi_new = s_xi + g_pi_c * (er + s_er_prev);
-    float Upi = NB * er + KI_GAIN * xi_new;
     bool clamping = ((er > 0.0f) && (Upi > sat_max)) || ((er < 0.0f) && (Upi < sat_min));
 
     if (clamping) {
-        xi_new = s_xi;
-        Upi   = s_xi;
-    }
-    if (Upi > sat_max) {
+        //pass
+    }if (Upi > sat_max) {
         Upi = sat_max;
-    }
-    else if (Upi < sat_min) {
+    }else if (Upi < sat_min) {
         Upi = sat_min;
+    }else {
+        xi_old = xi;
     }
-    s_xi = xi_new;
-    s_er_prev = er;
+    er_old = er;
+    
     return Upi;
 }
 
-float observador_processo(float Th, float Uobs, float estados[2])
+float observador_processo(float Uobs, float ee)
 {
-    float Ye_prev = s_x1e + s_x2e;
-    float ee = Th - Ye_prev;
-    float x1e_new = g_ad1 * s_x1e + g_bd1 * (Uobs + s_u_prev) + g_ld1 * (ee   + s_ee_prev);
-    float x2e_new = g_ad2 * s_x2e + g_bd2 * (Uobs + s_u_prev) + g_ld2 * (ee   + s_ee_prev);
-    s_x1e    = x1e_new;
-    s_x2e    = x2e_new;
-    s_u_prev = Uobs;
-    s_ee_prev = ee;
-    float Ye = x1e_new + x2e_new;
-    estados[0] = x1e_new;
-    estados[1] = x2e_new;
-    return Ye;
+    x1e = (euler1*x1e_old) + ((Tp1*(1-euler1))*((L1*eep_old)+(Kp*(Uobs_old))));
+    x2e = (euler2*x2e_old) + ((Tp2*(1-euler2))*((L2*eep_old)+(Kp*(Uobs_old))));
+    float Yestimado = ((ATp1)*x1e) + ((BTp2)*x2e);
+
+    x1e_old = x1e;
+    x2e_old = x2e;
+    Uobs_old = Uobs;
+    eep_old = ee;
+    if (Yestimado < 20.0f) {
+        Yestimado = 20.0f;
+    }
+
+    return Yestimado;
 }
 
 float observador_senoidal(float ee)
 {
-    float ee_sum = ee + s_eesin_prev;
-    float xs1_new = g_Fss[0][0] * s_xs1 + g_Fss[0][1] * s_xs2 + (g_Gss[0] * ee_sum * 0.5f);
-    float xs2_new = g_Fss[1][0] * s_xs1 + g_Fss[1][1] * s_xs2 + (g_Gss[1] * ee_sum * 0.5f);
-    s_xs1 = xs1_new;
-    s_xs2 = xs2_new;
-    s_eesin_prev = ee;
-    return xs1_new;
+    float xs1 = (a1*xs1_old) - xs1_old2 +(b1*ees_old)+(c1*ees_old2);
+    float xs2 = (a2*xs2_old) - xs2_old2 +(b2*ees_old)+(c2*ees_old2);
+    xs1_old2 = xs1_old;
+    xs1_old = xs1;
+    xs2_old2 = xs2_old;
+    xs2_old = xs2;
+    ees_old2 = ees_old;
+    ees_old = ee;
+
+    if (xs1 > SATmax) {
+        xs1 = SATmax;
+    }else if (xs1 < -SATmax) {
+        xs1 = -SATmax;
+    }else {
+        //pass
+    }
+    return xs1;
 }
 
-float realimentacao_estados(float estados[2])
+float realimentacao_estados()
 {
-    float Uk = KA1 * estados[0] + KA2 * estados[1] + KXE * s_xs1;
-    return Uk;
+    float Kxe = (K1*x1e) + (K2*x2e);
+
+    if (Kxe > SATmax) {
+        Kxe = SATmax;
+    }else if (Kxe < -SATmax) {
+        Kxe = -SATmax;
+    }else {
+        //pass
+    }
+    return Kxe;
 }
 
 float median_update(MedianFilter *f, float new_val) {
@@ -243,10 +255,9 @@ void app_main(void) {
     init_pwm();
     init_adc_oneshot();
     int64_t last_time = -1;
-    printf("| Tempo (s) | PWM | Tensão(V) | Heater Normalizado(°C) | Ambient Normalizado(°C) | Heater(°C) | Ambient(°C) | Temp Alvo(°C) | Erro(°C) |\n");
+    printf("| Tempo (s) | PWM | Tensão(V) | Heater(°C) | Heater raw(°C) | Ambient(°C) | Ambient raw(°C) | Temp Alvo(°C) | Erro(°C) |\n");
     MedianFilter mf_heater = {0}, mf_ambient = {0};
     EWMFilter    ef_heater = {0}, ef_ambient = {0};
-    parametros_projeto(Sample_Period/1000);
     Set_Heater(PWM_Value);
     float Uobs = 0.0f;
     float Target = 60.0f;
@@ -272,17 +283,48 @@ void app_main(void) {
                 float Volts = (PWM_Value*0.008f);
                 float Error = Th - Target;
                 
-                printf("-| %lld | %lu | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n", (Time/1000), PWM_Value, Volts, Th, Ta, Th_raw, Ta_raw, Target, Error);
+                printf("-| %lld | %lu | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n", (Time/1000), PWM_Value, Volts, Th, Th_raw, Ta, Ta_raw, Target, Error);
+                
+                if (transient){
+                    float Upi = PI_control(Th_raw, Target, SATmax, SATmin);
+                    printf("Uobs: %.2f | Upi: %.2f | Ye: %.2f | Uk: %.2f | ee: %.2f | e_sin: %.2f\n", 0.0f, Upi, 0.0f, 0.0f, 0.0f, 0.0f);
 
-                float Upi = PI_control(Th, Target, SATmax, SATmin);
-                float Ye = observador_processo(Th, Uobs, estados);
-                float Uk = realimentacao_estados(estados);
-                Uobs = Upi - Uk;
-                float ee = Th - Ye;
-                float e_sin = observador_senoidal(ee);
-                PWM_Value = (uint32_t)(Uobs-e_sin);
+                    PWM_Value = (uint32_t)(Upi);
 
-                Set_Heater(PWM_Value);
+                    if (PWM_Value > SATmax) {
+                        PWM_Value = SATmax;
+                    }else if (PWM_Value < SATmin) {
+                        PWM_Value = SATmin;
+                    }
+                    Set_Heater(PWM_Value);
+                    if (Th_raw > 60.0f) {
+                        transient = false;
+                    }
+                }else{
+                    ee = Th_raw - Ye;
+                    float Upi = PI_control(Th_raw, Target, SATmax, SATmin);
+                    Ye = observador_processo(Uobs, ee);
+                    float Uk = realimentacao_estados();
+                    Uobs = Upi - Uk;
+                    float e_sin = observador_senoidal(ee);
+                    printf("Uobs: %.2f | Upi: %.2f | Ye: %.2f | Uk: %.2f | ee: %.2f | e_sin: %.2f\n", Uobs, Upi, Ye, Uk, ee, e_sin);
+
+
+                    if (e_sin > Uobs){
+                        PWM_Value = SATmin;
+                    }else if (PWM_Value < SATmin){
+                        PWM_Value = SATmin;
+                    }else {
+                        PWM_Value = (uint32_t)(Uobs-e_sin);
+                    }
+
+                    if (PWM_Value > SATmax) {
+                        PWM_Value = SATmax;
+                    }else if (PWM_Value < SATmin) {
+                        PWM_Value = SATmin;
+                    }
+                    Set_Heater(PWM_Value);
+                }
             }
 
             last_time = Time;
