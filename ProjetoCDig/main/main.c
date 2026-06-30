@@ -9,15 +9,21 @@
 
 // Definições de Hardware
 #define PWM_Heater 10
+#define PWM_W 11
 #define ADC_UNIT ADC_UNIT_1
 #define ADC_Heater ADC_CHANNEL_0 
 #define ADC_Ambient ADC_CHANNEL_1 
 #define Set_Heater(Value) ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, Value, 0)
+#define Set_W(ValueW) ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, ValueW, 0)
 
 // Seed pro random
 static uint16_t lfsr = 0xACE1u;
 
 // Parametros do código
+#define Coleta_de_Dados false
+bool transient = true;
+#define R_quadradico true
+
 #define Sample_Period 3700  
 #define PWM_Base 150   
 #define PWM_Var 40
@@ -28,14 +34,13 @@ static uint16_t lfsr = 0xACE1u;
 #define SATmin 0.0f
 #define Smplg 1.0f
 #define ALPHA 0.15f
-#define R_quadradico true
 #define UpperLimit 600.0f
 #define LowerLimit SATmin
+#define Wstep 800
+#define Wfreq 0.02f
 
 static adc_oneshot_unit_handle_t adc_handle;
 static float median_sorted[MEDIAN_SIZE];
-bool Coleta_de_Dados = false;
-bool transient = true;
 uint32_t PWM_Value = 0;
 
 // Parametros do projeto atualizados conforme OutputMatLab.txt
@@ -53,7 +58,7 @@ uint32_t PWM_Value = 0;
 #define ATp1 0.00070489f
 #define BTp2 0.015838f
 #define Ki 1.2463f
-#define Nb 30.964f
+#define Nb 20.0f //30.964f
 #define Ts Sample_Period/1000.0f
 
 #define euler1 exp(-Ts/Tp1)
@@ -101,6 +106,20 @@ typedef struct {
 } EWMFilter;
 
 //Funções
+float perturbacao(float t_s)
+{
+    float fase = fmodf(t_s, 2700.0f);
+    if (fase < 900.0f) {
+        return 0.0f;
+    } else if (fase < 1800.0f) {
+        return Wstep;
+    } else {
+        float t_sine = fase - 1800.0f;
+        float sine   = Wstep * sinf(2.0f * (float)M_PI * Wfreq * t_sine);
+        return Wstep + sine;
+    }
+}
+
 float PI_control(float Th, float Target, float sat_max, float sat_min)
 {
     xi = xi_old + (Sample_Period*er_old);
@@ -209,24 +228,35 @@ uint8_t gerar_prbs_1_15(void) {
 void init_pwm() {
 
     ledc_timer_config_t ledc_timer = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .timer_num = LEDC_TIMER_0,
+        .speed_mode      = LEDC_LOW_SPEED_MODE,
+        .timer_num       = LEDC_TIMER_0,
         .duty_resolution = LEDC_TIMER_10_BIT,
-        .freq_hz = 5000,
-        .clk_cfg = LEDC_AUTO_CLK
+        .freq_hz         = 5000,
+        .clk_cfg         = LEDC_AUTO_CLK
     };
     ledc_timer_config(&ledc_timer);
 
-    ledc_channel_config_t ledc_channel = {
+    ledc_channel_config_t ledc_channel0 = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL_0,
-        .timer_sel = LEDC_TIMER_0,
-        .intr_type = LEDC_INTR_DISABLE,
-        .gpio_num = PWM_Heater,
-        .duty = PWM_Base,
-        .hpoint = 0
+        .channel    = LEDC_CHANNEL_0,
+        .timer_sel  = LEDC_TIMER_0,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .gpio_num   = PWM_Heater,
+        .duty       = PWM_Base,
+        .hpoint     = 0
     };
-    ledc_channel_config(&ledc_channel);
+    ledc_channel_config(&ledc_channel0);
+
+    ledc_channel_config_t ledc_channel1 = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel    = LEDC_CHANNEL_1,
+        .timer_sel  = LEDC_TIMER_0,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .gpio_num   = 11,
+        .duty       = 0,
+        .hpoint     = 0
+    };
+    ledc_channel_config(&ledc_channel1);
 
     ledc_fade_func_install(0);
 }
@@ -255,7 +285,7 @@ void app_main(void) {
     init_pwm();
     init_adc_oneshot();
     int64_t last_time = -1;
-    printf("| Tempo (s) | PWM | Tensão(V) | Heater(°C) | Heater raw(°C) | Ambient(°C) | Ambient raw(°C) | Temp Alvo(°C) | Erro(°C) |\n");
+    printf("| Tempo (s) | PWM | Tensão(V) | Heater(°C) | Heater raw(°C) | Ambient(°C) | Ambient raw(°C) | Temp Alvo(°C) | Erro(°C) | W(°C) |\n");
     MedianFilter mf_heater = {0}, mf_ambient = {0};
     EWMFilter    ef_heater = {0}, ef_ambient = {0};
     Set_Heater(PWM_Value);
@@ -271,19 +301,23 @@ void app_main(void) {
                 Switch = !Switch;
                 Target = Switch ? (Target + 5.0f) : (Target - 5.0f);
             } 
-            else {
+            else if (!R_quadradico){
                 Target = 60.0f;
             } 
             if (Time % Sample_Period == 0)
             {
+                float perturb = perturbacao(Time/1000);
+                Set_W((uint32_t)perturb);
+                
                 float Th_raw = ADC_Read(ADC_Heater);
                 float Ta_raw = ADC_Read(ADC_Ambient);
                 float Th = ewm_update(&ef_heater,  median_update(&mf_heater,  Th_raw));
                 float Ta = ewm_update(&ef_ambient, median_update(&mf_ambient, Ta_raw));
                 float Volts = (PWM_Value*0.008f);
                 float Error = Th - Target;
+                float perturbC = -perturb*0.005f;
                 
-                printf("-| %lld | %lu | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n", (Time/1000), PWM_Value, Volts, Th, Th_raw, Ta, Ta_raw, Target, Error);
+                printf("-| %lld | %lu | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n", (Time/1000), PWM_Value, Volts, Th, Th_raw, Ta, Ta_raw, Target, Error, perturbC);
                 
                 if (transient){
                     float Upi = PI_control(Th_raw, Target, SATmax, SATmin);
@@ -297,7 +331,7 @@ void app_main(void) {
                         PWM_Value = SATmin;
                     }
                     Set_Heater(PWM_Value);
-                    if (Th_raw > 60.0f) {
+                    if (Th > 60.0f) {
                         transient = false;
                     }
                 }else{
