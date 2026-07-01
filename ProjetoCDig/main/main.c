@@ -24,24 +24,23 @@ static uint16_t lfsr = 0xACE1u;
 bool transient = true;
 #define R_quadradico true
 
-#define Sample_Period 3700  
+#define Sample_Period 1000  
 #define PWM_Base 150   
 #define PWM_Var 40
-#define MEDIAN_SIZE 5
+#define MEDIAN_SIZE 3
 #define KP 0.03f
 #define KI (KP * 17.0f)
-#define SATmax 600.0f
+#define SATmax 1020.0f
 #define SATmin 0.0f
 #define Smplg 1.0f
 #define ALPHA 0.15f
-#define UpperLimit 600.0f
-#define LowerLimit SATmin
-#define Wstep 800
+#define Wstep 700
 #define Wfreq 0.02f
 
 static adc_oneshot_unit_handle_t adc_handle;
 static float median_sorted[MEDIAN_SIZE];
 uint32_t PWM_Value = 0;
+float Us = 0.0f;
 
 // Parametros do projeto atualizados conforme OutputMatLab.txt
 #define L1 47.893f
@@ -89,6 +88,10 @@ float er_old = 0;
 float ee = 0;
 float Ye = 25;
 
+float e_bunito = 0;
+float t_bunito = 0;
+float t_bunito_raw = 0;
+
 
 
 //Parametros dos filtros
@@ -129,12 +132,14 @@ float PI_control(float Th, float Target, float sat_max, float sat_min)
 
     if (clamping) {
         //pass
-    }if (Upi > sat_max) {
+    }else {
+        xi_old = xi;
+    }
+
+    if (Upi > sat_max) {
         Upi = sat_max;
     }else if (Upi < sat_min) {
         Upi = sat_min;
-    }else {
-        xi_old = xi;
     }
     er_old = er;
     
@@ -151,9 +156,6 @@ float observador_processo(float Uobs, float ee)
     x2e_old = x2e;
     Uobs_old = Uobs;
     eep_old = ee;
-    if (Yestimado < 20.0f) {
-        Yestimado = 20.0f;
-    }
 
     return Yestimado;
 }
@@ -169,13 +171,6 @@ float observador_senoidal(float ee)
     ees_old2 = ees_old;
     ees_old = ee;
 
-    if (xs1 > SATmax) {
-        xs1 = SATmax;
-    }else if (xs1 < -SATmax) {
-        xs1 = -SATmax;
-    }else {
-        //pass
-    }
     return xs1;
 }
 
@@ -183,13 +178,6 @@ float realimentacao_estados()
 {
     float Kxe = (K1*x1e) + (K2*x2e);
 
-    if (Kxe > SATmax) {
-        Kxe = SATmax;
-    }else if (Kxe < -SATmax) {
-        Kxe = -SATmax;
-    }else {
-        //pass
-    }
     return Kxe;
 }
 
@@ -297,7 +285,7 @@ void app_main(void) {
         int64_t Time = esp_timer_get_time()/1000;
 
         if (Time != last_time) {
-            if ((Time % (400*1000) == 0) && R_quadradico) {
+            if ((Time % (60*1000) == 0) && R_quadradico) {
                 Switch = !Switch;
                 Target = Switch ? (Target + 5.0f) : (Target - 5.0f);
             } 
@@ -306,9 +294,7 @@ void app_main(void) {
             } 
             if (Time % Sample_Period == 0)
             {
-                float perturb = perturbacao(Time/1000);
-                Set_W((uint32_t)perturb);
-                
+                float perturb = 0; //perturbacao(Time/1000);
                 float Th_raw = ADC_Read(ADC_Heater);
                 float Ta_raw = ADC_Read(ADC_Ambient);
                 float Th = ewm_update(&ef_heater,  median_update(&mf_heater,  Th_raw));
@@ -316,15 +302,22 @@ void app_main(void) {
                 float Volts = (PWM_Value*0.008f);
                 float Error = Th - Target;
                 float perturbC = -perturb*0.005f;
-                
                 printf("-| %lld | %lu | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f | %.2f |\n", (Time/1000), PWM_Value, Volts, Th, Th_raw, Ta, Ta_raw, Target, Error, perturbC);
-                
+
+                Set_W((uint32_t)perturb);
+                if (Th > 80.0f) {
+                    Set_Heater(0);
+                    Set_W((uint32_t)(1000.0f));
+                    printf("ERRO: Temperatura excedeu 95°C. Reiniciando...\n");
+                    vTaskDelay(pdMS_TO_TICKS(15000));
+                    esp_restart();
+                }
+
                 if (transient){
                     float Upi = PI_control(Th_raw, Target, SATmax, SATmin);
                     printf("Uobs: %.2f | Upi: %.2f | Ye: %.2f | Uk: %.2f | ee: %.2f | e_sin: %.2f\n", 0.0f, Upi, 0.0f, 0.0f, 0.0f, 0.0f);
 
                     PWM_Value = (uint32_t)(Upi);
-
                     if (PWM_Value > SATmax) {
                         PWM_Value = SATmax;
                     }else if (PWM_Value < SATmin) {
@@ -336,38 +329,30 @@ void app_main(void) {
                     }
                 }else{
                     ee = Th_raw - Ye;
+                    float e_sin = observador_senoidal(ee);
                     float Upi = PI_control(Th_raw, Target, SATmax, SATmin);
-                    Ye = observador_processo(Uobs, ee);
                     float Uk = realimentacao_estados();
                     Uobs = Upi - Uk;
-                    float e_sin = observador_senoidal(ee);
+                    Us = Uobs - e_sin;
+                    Ye = observador_processo(Uobs, ee); //observador_processo((Uobs-e_sin), ee);
                     printf("Uobs: %.2f | Upi: %.2f | Ye: %.2f | Uk: %.2f | ee: %.2f | e_sin: %.2f\n", Uobs, Upi, Ye, Uk, ee, e_sin);
 
 
-                    if (e_sin > Uobs){
+                    if (Us<SATmin){
                         PWM_Value = SATmin;
-                    }else if (PWM_Value < SATmin){
-                        PWM_Value = SATmin;
-                    }else {
-                        PWM_Value = (uint32_t)(Uobs-e_sin);
-                    }
-
-                    if (PWM_Value > SATmax) {
+                    }else if (Us>SATmax){
                         PWM_Value = SATmax;
-                    }else if (PWM_Value < SATmin) {
-                        PWM_Value = SATmin;
+                    }else {
+                        PWM_Value = (uint32_t)(Us);
                     }
                     Set_Heater(PWM_Value);
                 }
             }
-
             last_time = Time;
         }
         if (Time % Sample_Period == 3)
         {
             vTaskDelay(1);
         }
-        
-
     }
 }
