@@ -1,17 +1,26 @@
-from turtle import update
 import serial
 import time
 import sys
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from matplotlib.animation import FuncAnimation
+from collections import deque
 
 observed_time = 3600
-tempos = []
-PWM_values = []
-temp_heater = []
-temp_ambient = []
-raw_heater = []
-raw_ambient = []
+
+# Dados dos gráficos
+tempos        = []
+Uobs_values   = []
+esin_values   = []
+pwm_values    = []   # Uobs - e_sin
+Th_values     = []
+Ta_values     = []
+Target_values = []
+W_values      = []   # placeholder → sempre 0
+
+# Últimas linhas brutas para exibição no painel de texto
+last_output_lines = deque(maxlen=3)
+last_states_lines = deque(maxlen=3)
 
 if len(sys.argv) < 2:
     print("Porta nao especificada.")
@@ -20,86 +29,189 @@ if len(sys.argv) < 2:
 
 port = sys.argv[1]
 rate = 115200
-output_file = "Output" + time.strftime("%Y-%m-%d_%H-%M-%S") + ".txt"
+timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+output_file = "Output" + timestamp + ".txt"
+states_file = "States" + timestamp + ".txt"
 
 try:
     ser = serial.Serial(port, rate, timeout=1)
     time.sleep(2)
-    
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, sharex=True)
-    fig.set_size_inches(fig.get_size_inches()[0] * 2, fig.get_size_inches()[1])
-    fig.subplots_adjust(hspace=0.4)
 
-    ln1,     = ax1.plot([], [], 'r-',    label='Heater (°C)')
-    ln1_raw, = ax1.plot([], [], 'r-',    label='Heater raw (°C)', alpha=0.3)
-    ax1.axhline(y=55, color='orange',  linestyle='--', linewidth=1, label='55°C')
-    ax1.axhline(y=65, color='darkred', linestyle='--', linewidth=1, label='65°C')
-    ax1.legend(loc='upper left', fontsize='small')
-    ax1.set_ylabel('Heater')
-    ax1.set_title('Monitoramento Individual')
+    fig = plt.figure(figsize=(18, 12))
+    fig.patch.set_facecolor('#1e1e2e')
 
-    ln2,     = ax2.plot([], [], 'b-', label='Ambient (°C)')
-    ln2_raw, = ax2.plot([], [], 'b-', label='Ambient raw (°C)', alpha=0.3)
-    ax2.legend(loc='upper left', fontsize='small')
-    ax2.set_ylabel('Ambient')
+    # ax2 (Temperatura) domina a tela; ax1 (Controle) reduzido pela metade;
+    # painel de texto reduzido, dividido em Output | States lado a lado
+    gs = gridspec.GridSpec(3, 1, figure=fig, height_ratios=[3, 8, 1], hspace=0.4)
 
-    ln3, = ax3.plot([], [], 'g-', label='PWM')
-    ax3.legend(loc='upper left', fontsize='small')
-    ax3.set_ylabel('Potência')
-    ax3.set_xlabel('Tempo (s)')
+    ax1    = fig.add_subplot(gs[0])
+    ax2    = fig.add_subplot(gs[1], sharex=ax1)
+
+    gs_txt = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs[2], wspace=0.08)
+    ax_txt_out    = fig.add_subplot(gs_txt[0])
+    ax_txt_states = fig.add_subplot(gs_txt[1])
+
+    for ax in [ax1, ax2]:
+        ax.set_facecolor('#13131f')
+        ax.tick_params(colors='#cccccc')
+        ax.xaxis.label.set_color('#cccccc')
+        ax.yaxis.label.set_color('#cccccc')
+        ax.title.set_color('#ffffff')
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#444466')
+
+    for ax in [ax_txt_out, ax_txt_states]:
+        ax.set_facecolor('#0d0d1a')
+        ax.axis('off')
+        for spine in ax.spines.values():
+            spine.set_edgecolor('#444466')
+
+    # ── Gráfico 1: Uobs, e_sin, PWM ───────────────────────────────────────
+    ln_uobs, = ax1.plot([], [], color='#4fc3f7', linewidth=1.2, label='Uobs')
+    ln_esin, = ax1.plot([], [], color='#66bb6a', linewidth=1.2, label='e_sin')
+    ln_pwm,  = ax1.plot([], [], color='#ef5350', linewidth=1.2, label='PWM')
+    ax1.axhline(y=0, color='#555577', linestyle='--', linewidth=0.8)
+    ax1.legend(loc='upper left', fontsize='small', facecolor='#1e1e2e', labelcolor='white')
+    ax1.set_ylabel('Uobs / e_sin / PWM', color='#cccccc')
+    ax1.set_title('Controle: Uobs, e_sin e PWM', color='white')
+
+    # ── Gráfico 2: Th, Target, Ta, W ──────────────────────────────────────
+    ln_th,     = ax2.plot([], [], color='#ef5350', linewidth=1.4, label='Y (Th)')
+    ln_target, = ax2.plot([], [], color='#3DAF1D', linewidth=1.2, linestyle='-', label='R (Target)')
+    ln_ta,     = ax2.plot([], [], color='#42a5f5', linewidth=1.2, label='Ta')
+    ln_w,      = ax2.plot([], [], color='#FFD600', linewidth=1.2, linestyle='--', label='W')
+    ax2.legend(loc='upper left', fontsize='small', facecolor='#1e1e2e', labelcolor='white')
+    ax2.set_ylabel('Temperatura (°C)', color='#cccccc')
+    ax2.set_xlabel('Tempo (s)', color='#cccccc')
+    ax2.set_title('Temperatura: Th, Target, Ta e W', color='white')
+
+    txt_out_obj = ax_txt_out.text(
+        0.01, 0.95, '',
+        transform=ax_txt_out.transAxes,
+        fontsize=6.5,
+        verticalalignment='top',
+        fontfamily='monospace',
+        color='#dddddd',
+        wrap=True
+    )
+    txt_states_obj = ax_txt_states.text(
+        0.01, 0.95, '',
+        transform=ax_txt_states.transAxes,
+        fontsize=6.5,
+        verticalalignment='top',
+        fontfamily='monospace',
+        color='#dddddd',
+        wrap=True
+    )
+
+    def build_text(lines_deque, header):
+        lines = []
+        if lines_deque:
+            lines.append(header)
+            lines.extend(lines_deque)
+        return "\n".join(lines)
 
     def update(frame):
-        if ser.in_waiting > 0:
-            linha = ser.readline().decode('utf-8').rstrip()
-            if ("-|" in linha) and ("| Tempo (s) |" not in linha):
-                data = [p.strip() for p in linha[1:].split('|') if p.strip()]
-                if len(data) < 6:
-                    return ln1, ln1_raw, ln2, ln2_raw, ln3
+        while ser.in_waiting > 0:
+            try:
+                linha = ser.readline().decode('utf-8', errors='replace').rstrip()
+            except Exception:
+                continue
 
-                t, pwm, th, ta, rh, ra = (float(data[0]), float(data[1]),
-                                           float(data[2]), float(data[3]),
-                                           float(data[4]), float(data[5]))
+            # ── Linha de dados principais ──────────────────────────────────
+            if linha.startswith("-|") and "Tempo (s)" not in linha:
+                parts = [p.strip() for p in linha[1:].split('|') if p.strip()]
+                # 0=Tempo, 1=PWM, 2=Volts, 3=Th, 4=Th_raw, 5=Ta, 6=Ta_raw, 7=Target, 8=Error
+                if len(parts) >= 8:
+                    try:
+                        t      = float(parts[0])
+                        th     = float(parts[3])
+                        ta     = float(parts[5])
+                        target = float(parts[7])
+                        pwm  = float(parts[1])
+                        Wperturb  = float(parts[9])
 
-                lists = [tempos, PWM_values, temp_heater, temp_ambient, raw_heater, raw_ambient]
-                vals  = [t, pwm, th, ta, rh, ra]
+                        if len(tempos) > observed_time:
+                            for lst in [tempos, Th_values, Ta_values, Target_values, W_values]:
+                                lst.pop(0)
 
-                if len(tempos) > observed_time:
-                    for lst in lists:
-                        lst.pop(0)
+                        tempos.append(t)
+                        Th_values.append(th)
+                        Ta_values.append(ta)
+                        Target_values.append(target)
+                        W_values.append(Wperturb)
+                        pwm_values.append(pwm)
+                        ln_th.set_data(tempos, Th_values)
+                        ln_target.set_data(tempos, Target_values)
+                        ln_ta.set_data(tempos, Ta_values)
+                        ln_w.set_data(tempos, W_values)
+                        
 
-                for lst, v in zip(lists, vals):
-                    lst.append(v)
+                        ax2.set_xlim(max(0, tempos[-1] - observed_time), tempos[-1] + 10)
+                        all_temps = Th_values + Ta_values + Target_values + W_values
+                        ax2.set_ylim(-20, 90)
+                    except (ValueError, IndexError):
+                        pass
 
-                ln1.set_data(tempos, temp_heater)
-                ln1_raw.set_data(tempos, raw_heater)
-                ln2.set_data(tempos, temp_ambient)
-                ln2_raw.set_data(tempos, raw_ambient)
-                ln3.set_data(tempos, PWM_values)
+                last_output_lines.append(linha)
+                arquivo_out.write(linha + "\n")
+                arquivo_out.flush()
 
-                ax3.set_xlim(max(0, tempos[-1] - observed_time), tempos[-1] + 10)
+            # ── Linha de estados ───────────────────────────────────────────
+            elif linha.startswith("Uobs:"):
+                parts_s = {}
+                for token in linha.split('|'):
+                    token = token.strip()
+                    if ':' in token:
+                        k, v = token.split(':', 1)
+                        parts_s[k.strip()] = v.strip()
 
-                all_h = temp_heater + raw_heater
-                all_a = temp_ambient + raw_ambient
-                ax1.set_ylim(min(all_h + [50]) - 5, max(all_h + [70]) + 5)
-                ax2.set_ylim(min(all_a) - 5, max(all_a) + 5)
-                ax3.set_ylim(min(PWM_values) - 5, max(PWM_values) + 5)
+                try:
+                    uobs = float(parts_s.get('Uobs', 'nan'))
+                    esin = float(parts_s.get('e_sin', 'nan'))
 
-                if linha:
-                    arquivo.write(linha + "\n")
-                    arquivo.flush()
+                    if tempos:
+                        if len(Uobs_values) > observed_time:
+                            Uobs_values.pop(0)
+                            esin_values.pop(0)
+                            pwm_values.pop(0)
 
-        return ln1, ln1_raw, ln2, ln2_raw, ln3
+                        Uobs_values.append(uobs)
+                        esin_values.append(esin)
 
-    print(f"Lendo {port}")
+                        x_uobs = tempos[-len(Uobs_values):]
+                        ln_uobs.set_data(x_uobs, Uobs_values)
+                        ln_esin.set_data(x_uobs, esin_values)
+                        ln_pwm.set_data(x_uobs, pwm_values)
 
-    arquivo = open(output_file, "a", encoding="utf-8")
+                        all_u = Uobs_values + esin_values + pwm_values
+                        ax1.set_ylim(min(all_u) - 50, max(all_u) + 50)
+
+                except (ValueError, KeyError):
+                    pass
+
+                last_states_lines.append(linha)
+                arquivo_states.write(linha + "\n")
+                arquivo_states.flush()
+
+        txt_out_obj.set_text(build_text(last_output_lines, "─── Output ───"))
+        txt_states_obj.set_text(build_text(last_states_lines, "─── States ───"))
+        return ln_uobs, ln_esin, ln_pwm, ln_th, ln_target, ln_ta, ln_w, txt_out_obj, txt_states_obj
+
+    print(f"Lendo {port} | Output → {output_file} | States → {states_file}")
+
+    arquivo_out    = open(output_file, "a", encoding="utf-8")
+    arquivo_states = open(states_file, "a", encoding="utf-8")
+
     ani = FuncAnimation(fig, update, blit=False, interval=100, cache_frame_data=False)
     plt.show()
 
 except serial.SerialException as e:
     print(f"Erro de conexão: {e}")
 finally:
-    if 'arquivo' in locals():
-        arquivo.close()
+    if 'arquivo_out' in locals():
+        arquivo_out.close()
+    if 'arquivo_states' in locals():
+        arquivo_states.close()
     if 'ser' in locals() and ser.is_open:
         ser.close()
