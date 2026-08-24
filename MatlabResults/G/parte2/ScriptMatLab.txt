@@ -1,0 +1,96 @@
+% Prj1CDig_m
+%
+% Controle PI Anti-WindUp de Processo Térmico
+%
+% @AB ENE/UnB Condrole Digital
+
+% resposta do processo térmico ao sinal PRBS
+dados = readmatrix('output.txt'); 
+showPrj1 = 0;
+
+Ta=mean(dados(:, 5));     % Temp. Ambiente - Entrada a ser medida em tempo-real
+
+PO = 60;  % Ponto de Operação em ºC
+% Frequencia cooler Perturbação senoidal
+w0=0.098;
+
+umax=1024;  % Resolução do PWM ou 12 V do aquecimento máximo
+umin=0;
+
+ % Condições iniciais (ou deixar 0).
+xs1i=0; xii=0; xs2i=0; x1i=0; x2i=0; x1ei=0; x2ei=0;
+
+%  P2DZ de referência: ganho, 2 polos, atraso e zero - só para se familiarizar
+% <<<<< Estes valores deverão ser atualizados por cada grupo >>>>>>>>>
+Kp = 0.23573;
+Tp1 = 400;
+Tp2 = 45.337;
+Td = 3.523;
+Tz = 300;
+
+Tid=(Td+0.2);
+
+%%%%%%%%%%%%%%%%%%%%
+% Identificação dos Parâmetros a partir dos Sinais Medidos  
+kp=Kp, tz=Tz; tp1=Tp1; tp2=Tp2; td=Td;
+fprintf('Parametros\n kp: %f\n tp1: %f\n tp2: %f\n td: %f\n tz: %f\n', kp, tp1, tp2, td, tz)
+% Função de Transferência Modal  
+% T(s)/Ta(s)  =      A/(Tp1.s +1) +      B/(Tp2.s+1)
+% T(s)/U(s)  = Kp*A/(Tp1.s +1) + Kp*B/(Tp2.s+1)
+
+A = (Tz-Tp1)/(Tp2-Tp1);
+B = 1 - A;
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+if showPrj1 ==1;
+% Malha Aberta para identificação PRBS
+    open Termico_FP
+    sim Termico_FP
+
+% Malha Fechada - Controle PI-AntiWindup
+    open Prj1CDig
+    sim Prj1CDig
+end  
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+% Projeto EE contínuo com canla PI
+ssd.A = [-1/Tp1 0; 0 -1/Tp2]; ssd.B = [Kp;Kp]; ssd.C=[A/Tp1 B/Tp2];
+
+%Projeto K
+Aa=[ssd.A(1,:) 0
+    ssd.A(2,:) 0
+    -ssd.C     0]  %xi
+Ba=[ssd.B; 0];
+Ca=[ssd.C  0];
+
+%Projeto K
+p=[-0.0008, -0.01,];
+p=[-(3.5*4.6)/Tp1, -1/Tz];      % Melhor opção -> colocar um pólo sobre o zero da FT!!
+%p=[-100/Tp1, -1/Tz];
+
+fprintf('--------------polos--------------\n');
+disp(p);
+fprintf('--------------polos--------------\n');
+
+Ka=acker(Aa,Ba,[p,3*p(1)])
+Ki=-Ka(3),K=Ka(1:2),
+Nb=-Ki/p(1);      % (Nb + Ki s)/s    Nb s + Ki  -> s=-Ki/Nb =  Nb => -Ki/p  
+
+%%%%%%%%%%%%%%%%%%%%%%% 
+% Observador aumentado 
+
+% Projeto L
+As=[0 1;
+    -w0^2 0];
+Cs=[1 0];
+
+Aa=[ssd.A    ssd.B*Cs;
+    [0 0;0  0]   As];
+Ba=[ssd.B;0;0]; Ca=[ssd. C 0 0];
+
+o = 12*[-1/Tp1, -1/Tp2, -1/(Tp1*1.1), -1/(Tp1*1.2)]
+L=place(Aa',Ca',o)'
+Ls1=L(3);Ls2=L(4);
+
+open Prj2CDig
+sim Prj2CDig
